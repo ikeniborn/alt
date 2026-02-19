@@ -1,6 +1,6 @@
 # Управление RDP-сессиями: стабильная работа на ALT Linux + xrdp
 
-**Версия:** 1.7
+**Версия:** 1.10
 **Окружение:** ALT Workstation K 10.4, xrdp 0.10.2-alt2, KDE Plasma 5
 **Дата:** 2026-02-19
 
@@ -237,64 +237,128 @@ sudo systemctl restart xrdp-sesman
 
 **Версия в системе:** Remmina 1.4.40
 
-### RDP-файл профиля
+### Форматы профилей
 
-Remmina поддерживает импорт стандартных `.rdp` файлов: `Файл → Импорт`.
+Remmina использует два формата:
 
-Сохранить как `alt-rdp.rdp` и импортировать, или создать профиль вручную по параметрам ниже.
+| Формат | Параметры сети/качества | Использование |
+|--------|------------------------|---------------|
+| `.rdp` | **Отсутствуют** — это поля только Remmina | Импорт/экспорт, совместимость с mstsc.exe |
+| `.remmina` | Есть (`network`, `quality`) | Нативный формат, полный контроль |
 
-**Готовый профиль** `alt-rdp.rdp`:
+При импорте `.rdp` файла поля "Тип сети" и "Качество" остаются пустыми — их нет
+в стандарте `.rdp`. Поэтому используется нативный `.remmina` профиль.
+
+### Нативный профиль Remmina
+
+Файл профиля: `docs/alt-rdp.remmina`
+
+Установить:
+```bash
+cp docs/alt-rdp.remmina ~/.local/share/remmina/
+```
+
+После копирования — перезапустить Remmina. Профиль **ALT-RDP** появится в списке.
+
+> GUI "Импорт" в Remmina предназначен только для `.rdp` файлов. Для `.remmina`
+> профилей — только копирование в папку `~/.local/share/remmina/`.
+
+Содержимое `docs/alt-rdp.remmina`:
 
 ```ini
-screen mode id:i:2
-session bpp:i:32
-compression:i:1
-keyboardhook:i:2
-displayconnectionbar:i:1
-disable wallpaper:i:1
-disable full window drag:i:1
-allow desktop composition:i:1
-allow font smoothing:i:1
-disable menu anims:i:1
-disable themes:i:0
-disable cursor setting:i:0
-bitmapcachepersistenable:i:1
-full address:s:10.152.242.94
-audiomode:i:2
-audiocapturemode:i:0
-redirectprinters:i:0
-redirectsmartcard:i:0
-redirectcomports:i:0
-redirectsmartcards:i:0
-redirectclipboard:i:1
-redirectposdevices:i:0
-autoreconnection enabled:i:1
-authentication level:i:0
-prompt for credentials:i:1
-negotiate security layer:i:1
-remoteapplicationmode:i:0
-alternate shell:s:
-shell working directory:s:
-gatewayhostname:s:
-gatewayusagemethod:i:4
-gatewaycredentialssource:i:4
-gatewayprofileusagemethod:i:0
-precommand:s:
-promptcredentialonce:i:1
-drivestoredirect:s:
+[remmina]
+name=ALT-RDP
+group=
+protocol=RDP
+server=10.152.242.94
+username=i.y.tischenko
+domain=UF.RT.RU
+password=
+colordepth=0
+quality=2
+network=lan
+glyph-cache=false
+sound=off
+microphone=false
+viewmode=4
+resmode=2
+scale=1
+keyboard_grab=2
+keyboard_layout=0
+span=false
+multimon=false
+compression=true
+bitmapcaching=true
+disableautoreconnect=false
+disablewallpaper=true
+disableanimations=true
+disablefullwindowdrag=true
+allowdesktopcomposition=false
+allowfontsmoothing=true
+disablethemes=false
+disablecursorsetting=false
+redirectclipboard=true
+shareprinter=false
+sharesmartcard=false
+shareusb=false
+redirectposdevices=false
+redirectcomports=false
+drivestoredirect=
+authentication level=0
+```
+
+Содержимое профиля:
+
+```ini
+[remmina]
+name=ALT-RDP
+protocol=RDP
+server=10.152.242.94
+username=i.y.tischenko
+domain=UF.RT.RU
+colordepth=32
+quality=2
+network=5
+glyph-cache=true
+sound=off
+microphone=false
+viewmode=4
+resmode=2
+compression=true
+bitmapcaching=true
+disableautoreconnect=false
+disablewallpaper=true
+disableanimations=true
+disablefullwindowdrag=true
+allowdesktopcomposition=true
+allowfontsmoothing=true
+redirectclipboard=true
+authentication level=0
 ```
 
 ### Пояснение к ключевым параметрам
 
-| Параметр | Значение | Причина |
-|---|---|---|
-| `session bpp` | `32` | **Критично.** `0` = неопределённый bpp → xrdp создаёт новую сессию при каждом подключении. `32` = фиксированный bpp → Policy=UB находит существующую сессию |
-| `allow desktop composition` | `1` | Нужно KDE для корректного рендера (kwin использует композитинг) |
-| `allow font smoothing` | `1` | Сглаживание шрифтов в KDE |
-| `audiocapturemode` | `0` | Звук отключён (`audiomode:2`), захват незачем |
-| `autoreconnection enabled` | `1` | Автопереподключение при обрыве сети |
-| `authentication level` | `0` | Не проверять сертификат — нужно для самоподписанного сертификата xrdp |
-| `redirectclipboard` | `1` | Буфер обмена между клиентом и сервером |
+| Параметр | Значение | В UI Remmina | Причина |
+|---|---|---|---|
+| `colordepth` | `0` | RemoteFX (32 bpp) | Тайловый кодек — передаёт только изменившиеся области. `65535` = Автоматическое (не RemoteFX) → xrdp деградирует и добавляет задержку. `0` — единственное корректное значение для RemoteFX в Remmina 1.4.x |
+| `quality` | `2` | Good | Баланс скорости и качества на LAN |
+| `network` | `lan` | LAN | Строковое значение, не числовое. Оптимизирует буферизацию для локальной сети |
+| `glyph-cache` | `false` | Glyph cache ☐ | Отключено — FreeRDP предупреждает о визуальных артефактах при включении |
+| `allowdesktopcomposition` | `false` | — | Отключено. В xrdp нет GPU — KWin compositor работает на CPU и замедляет прокрутку. Compositing отключается через `~/.profile` только для xrdp-сессии |
+| `allowfontsmoothing` | `true` | — | Сглаживание шрифтов в KDE Plasma |
+| `viewmode` | `4` | Fullscreen | Полноэкранный режим |
+| `authentication level` | `0` | — | Не проверять сертификат xrdp (самоподписанный) |
+
+### Файл .rdp для mstsc.exe (Windows)
+
+Файл `docs/alt-rdp.rdp` — для подключения из Windows через стандартный RDP-клиент.
+Параметры сети и качества в нём не задаются (ограничение формата) — Windows mstsc
+определяет их автоматически.
+
+Критичный параметр который должен быть в `.rdp`:
+```
+session bpp:i:32
+```
 
 ### Правильное завершение работы
 
@@ -302,6 +366,60 @@ drivestoredirect:s:
 на сервере. При следующем подключении попадёте в ту же сессию.
 
 Не нажимать "Выйти из системы" в меню KDE — это logoff, сессия уничтожается.
+
+---
+
+## Оптимизация производительности
+
+### Проблема: задержка при прокрутке (скроллинге)
+
+**Причина:** KWin compositor работает на CPU в xrdp-сессии — GPU-ускорения нет.
+При скроллинге compositor перерисовывает затронутые области экрана на CPU → задержка.
+
+### Решение 1. RemoteFX кодек в Remmina (`colordepth=65535`)
+
+RemoteFX передаёт только изменившиеся тайлы экрана вместо полного растра.
+При скроллинге обновляется узкая полоса — трафик и задержка минимальны.
+
+В профиле `alt-rdp.remmina` уже установлено: `colordepth=65535`.
+
+### Решение 2. Отключить KWin compositing только для xrdp-сессии
+
+xrdp устанавливает переменную `XRDP_SESSION` при каждом RDP-входе.
+Через `~/.profile` compositing отключается только в RDP, локальная KDE-сессия не затрагивается.
+
+Файл `~/.profile`:
+
+```sh
+# Отключить KWin compositing только в xrdp-сессии.
+# В xrdp нет GPU-ускорения — compositor работает на CPU и замедляет прокрутку.
+# XRDP_SESSION устанавливается автоматически xrdp-sesman при входе через RDP.
+if [ -n "$XRDP_SESSION" ]; then
+    export KWIN_COMPOSE=N
+fi
+```
+
+Применяется при следующем RDP-входе (переподключение к той же сессии не перезапускает `.profile`).
+Для немедленного применения в текущей сессии:
+
+```bash
+DISPLAY=:10 kwin_x11 --replace &
+```
+
+### Что уже оптимизировано в xrdp.ini
+
+```ini
+tcp_nodelay=true       # минимальная сетевая задержка
+tcp_keepalive=true     # удержание соединения
+bulk_compression=true  # сжатие потока RDP
+max_bpp=32             # максимальный bpp — не конфликтует с RemoteFX:
+                       # RemoteFX работает поверх 32bpp, max_bpp=32 именно это и разрешает
+```
+
+> `colordepth=65535` (RemoteFX) и `max_bpp=32` совместимы.
+> RemoteFX — это кодек сжатия, работающий поверх 32bpp канала.
+> FreeRDP при RemoteFX устанавливает bpp=32, что равно max_bpp=32 → ограничение не срабатывает.
+> Конфликт возник бы только при `max_bpp` < 32.
 
 ---
 
@@ -346,6 +464,8 @@ grep -E "create a session|Received request" /var/log/xrdp-sesman.log | tail -5
 | `/etc/xrdp/xrdp.ini` | Основной конфиг xrdp |
 | `/etc/xrdp/startwm.sh` | Запуск KDE Plasma при новой сессии |
 | `/etc/xrdp/reconnectwm.sh` | Скрипт при переподключении |
+| `~/.profile` | Переменные окружения для xrdp-сессии (KWIN_COMPOSE=N) |
+| `~/.local/share/remmina/alt-rdp.remmina` | Профиль Remmina |
 | `$HOME/.xorgxrdp.NN.log` | Лог X-сессии (NN = номер display) |
 | `/var/log/xrdp-sesman.log` | Лог сессий (перезаписывается при рестарте) |
 | `/var/log/xrdp.log` | Лог xrdp демона (подключения) |
