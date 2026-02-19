@@ -1,6 +1,6 @@
 # Управление RDP-сессиями: стабильная работа на ALT Linux + xrdp
 
-**Версия:** 1.6
+**Версия:** 1.7
 **Окружение:** ALT Workstation K 10.4, xrdp 0.10.2-alt2, KDE Plasma 5
 **Дата:** 2026-02-19
 
@@ -237,42 +237,71 @@ sudo systemctl restart xrdp-sesman
 
 **Версия в системе:** Remmina 1.4.40
 
-### Обязательные параметры профиля
+### RDP-файл профиля
 
-При создании нового RDP-подключения:
+Remmina поддерживает импорт стандартных `.rdp` файлов: `Файл → Импорт`.
 
-**Вкладка "Основные" (Basic):**
+Сохранить как `alt-rdp.rdp` и импортировать, или создать профиль вручную по параметрам ниже.
+
+**Готовый профиль** `alt-rdp.rdp`:
+
+```ini
+screen mode id:i:2
+session bpp:i:32
+compression:i:1
+keyboardhook:i:2
+displayconnectionbar:i:1
+disable wallpaper:i:1
+disable full window drag:i:1
+allow desktop composition:i:1
+allow font smoothing:i:1
+disable menu anims:i:1
+disable themes:i:0
+disable cursor setting:i:0
+bitmapcachepersistenable:i:1
+full address:s:10.152.242.94
+audiomode:i:2
+audiocapturemode:i:0
+redirectprinters:i:0
+redirectsmartcard:i:0
+redirectcomports:i:0
+redirectsmartcards:i:0
+redirectclipboard:i:1
+redirectposdevices:i:0
+autoreconnection enabled:i:1
+authentication level:i:0
+prompt for credentials:i:1
+negotiate security layer:i:1
+remoteapplicationmode:i:0
+alternate shell:s:
+shell working directory:s:
+gatewayhostname:s:
+gatewayusagemethod:i:4
+gatewaycredentialssource:i:4
+gatewayprofileusagemethod:i:0
+precommand:s:
+promptcredentialonce:i:1
+drivestoredirect:s:
+```
+
+### Пояснение к ключевым параметрам
 
 | Параметр | Значение | Причина |
 |---|---|---|
-| Глубина цвета (Color depth) | **RemoteFX (32 bpp)** | Одинаковый bpp = одна сессия при Policy=UB |
-| Разрешение (Resolution) | Use client resolution | Подстраивается под монитор |
-
-**Вкладка "Дополнительно" (Advanced):**
-
-| Параметр | Значение | Причина |
-|---|---|---|
-| Качество (Quality) | **Good** | Баланс скорости и качества на LAN |
-| Тип сети (Network connection type) | **LAN** | Отключает лишнее сжатие |
-| Glyph cache | Включить | Ускоряет отрисовку текста |
-
-### Пример профиля
-
-```
-Имя: ALT-RDP
-Протокол: RDP
-Сервер: 10.152.242.94
-Пользователь: UF.RT.RU\i.y.tischenko
-Глубина цвета: RemoteFX (32 bpp)
-Разрешение: Use client resolution
-Качество: Good
-Тип сети: LAN
-```
+| `session bpp` | `32` | **Критично.** `0` = неопределённый bpp → xrdp создаёт новую сессию при каждом подключении. `32` = фиксированный bpp → Policy=UB находит существующую сессию |
+| `allow desktop composition` | `1` | Нужно KDE для корректного рендера (kwin использует композитинг) |
+| `allow font smoothing` | `1` | Сглаживание шрифтов в KDE |
+| `audiocapturemode` | `0` | Звук отключён (`audiomode:2`), захват незачем |
+| `autoreconnection enabled` | `1` | Автопереподключение при обрыве сети |
+| `authentication level` | `0` | Не проверять сертификат — нужно для самоподписанного сертификата xrdp |
+| `redirectclipboard` | `1` | Буфер обмена между клиентом и сервером |
 
 ### Правильное завершение работы
 
-Закрывать окно Remmina **крестиком** — это disconnect, сессия KDE продолжает
-работать на сервере. Не нажимать "Выйти из системы" в меню KDE внутри сессии.
+Закрывать окно Remmina **крестиком** (disconnect) — сессия KDE продолжает работать
+на сервере. При следующем подключении попадёте в ту же сессию.
+
+Не нажимать "Выйти из системы" в меню KDE — это logoff, сессия уничтожается.
 
 ---
 
