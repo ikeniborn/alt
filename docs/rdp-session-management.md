@@ -1,6 +1,6 @@
 # Управление RDP-сессиями: стабильная работа на ALT Linux + xrdp
 
-**Версия:** 1.5
+**Версия:** 1.6
 **Окружение:** ALT Workstation K 10.4, xrdp 0.10.2-alt2, KDE Plasma 5
 **Дата:** 2026-02-19
 
@@ -27,7 +27,7 @@ Policy=Default            # UB: user + bits-per-pixel — OK
 **Причина — одна из двух (нужно диагностировать):**
 
 **А) Предыдущая сессия завершилась.**
-Пользователь при отключении нажал "Выйти из системы" вместо закрытия окна RDP-клиента.
+Пользователь нажал "Выйти из системы" вместо закрытия окна RDP-клиента.
 KDE завершается, сессия уничтожается. При следующем подключении создаётся новая.
 
 В логах:
@@ -63,22 +63,22 @@ Session on display 10 has finished.
 ### Проверить количество текущих сессий
 
 ```bash
-# Каждая строка Xorg — отдельная xrdp-сессия
-# startplasma без Xorg рядом — локальная сессия LightDM (норма)
+# Каждый Xorg — отдельная xrdp-сессия
+# startplasma без видимого Xorg — локальная сессия LightDM (норма)
 ps aux | grep -E "startplasma-x11|Xorg" | grep -v grep
 ```
 
 Нормальная картина для одного пользователя:
 ```
-user  4378  startplasma-x11          ← локальная KDE (LightDM)
-user  193097 Xorg :10 (xrdp)  ┐
-user  193120 startplasma-x11   ┘  ← одна xrdp-сессия
+user  4378   startplasma-x11               ← локальная KDE (LightDM)
+user  193097 Xorg :10 -auth ... (xrdp)  ┐
+user  193120 startplasma-x11             ┘  ← одна xrdp-сессия
 ```
 
 Проблемная картина — несколько Xorg:
 ```
-user  Xorg :10   ┐ сессия 1
-user  Xorg :11   ┘ сессия 2  ← лишняя, накопилась
+user  Xorg :10 ...  ┐ сессия 1
+user  Xorg :11 ...  ┘ сессия 2  ← лишняя, накопилась
 ```
 
 ### Определить причину создания новых сессий
@@ -95,7 +95,7 @@ grep -E "finished normally|create a session|found existing session" \
 ### Проверить bpp при подключениях
 
 ```bash
-# Использовать явный путь — при sudo тильда раскрывается как /root/
+# $HOME работает корректно; не использовать ~ при sudo
 grep "bpp" $HOME/.xorgxrdp.*.log
 ```
 
@@ -108,25 +108,23 @@ grep "bpp" $HOME/.xorgxrdp.*.log
 ### Шаг 1. Установить DisconnectedTimeLimit (обязательно)
 
 `DisconnectedTimeLimit` — таймер **простоя без подключения**. Запускается в момент
-disconnect. Сбрасывается при reconnect. Если пользователь переподключился до истечения
-таймера — попадает в ту же сессию, таймер запускается заново.
+disconnect. **Сбрасывается при reconnect.** Если пользователь переподключился до
+истечения таймера — попадает в ту же сессию, таймер запускается заново.
 
 ```
 Disconnect → таймер 7200 сек
 Reconnect через 30 мин → та же сессия, таймер сбрасывается
-Disconnect → таймер 7200 сек
+Disconnect снова → таймер 7200 сек
 Нет reconnect 7200 сек → сессия убивается автоматически
 ```
 
 ```bash
 sudo crudini --set /etc/xrdp/sesman.ini Sessions DisconnectedTimeLimit 7200
-sudo systemctl reload xrdp-sesman   # применяет конфиг без завершения сессий (SIGHUP)
+sudo systemctl reload xrdp-sesman   # SIGHUP: применяет конфиг без завершения сессий
 ```
 
-> `systemctl reload` (SIGHUP) перечитывает конфиг и применяет изменение к новым
-> disconnect-событиям, не трогая уже запущенные сессии.
-> `systemctl restart` — завершает все сессии включая активные; применять только
-> при отсутствии пользователей.
+> `systemctl reload` (SIGHUP) перечитывает конфиг не трогая запущенные сессии.
+> `systemctl restart` — завершает все сессии; применять только при отсутствии пользователей.
 
 | Значение | Поведение |
 |----------|-----------|
@@ -148,9 +146,58 @@ kwriteconfig5 --file ksmserverrc --group General --key loginMode restorePrevious
 
 ### Шаг 3. Причина Б — зафиксировать bpp=32 на всех клиентах
 
-На Windows (mstsc.exe): вкладка "Дополнительно" → Качество цвета → **True Color (32 бит)**
+Настройки RDP-клиентов описаны в разделе [Настройка Remmina](#настройка-remmina).
 
-На Linux (Remmina, FreeRDP): параметр `--bpp 32` или "Color depth: True color (32 bpp)"
+---
+
+## Скрипт reconnectwm.sh
+
+Файл `/etc/xrdp/reconnectwm.sh` выполняется xrdp-sesman **при каждом переподключении**
+к существующей сессии (не при создании новой).
+
+**Условия выполнения:**
+- Запускается от имени пользователя без аргументов
+- Переменные окружения установлены xrdp-sesman: `DISPLAY`, `HOME`, `USER`, `SHELL`
+- `DISPLAY` имеет вид `:10.0` (с суффиксом `.0`)
+- Скрипт должен завершаться быстро — он блокирует завершение reconnect
+
+**Содержимое** `/etc/xrdp/reconnectwm.sh`:
+
+```sh
+#!/bin/sh
+# Выполняется при переподключении к существующей xrdp-сессии.
+# Переменные окружения: DISPLAY, HOME, USER, SHELL — установлены xrdp-sesman.
+
+# Подстроить разрешение под новый монитор/клиент.
+# При reconnect с другого ПК KDE не перестраивает разрешение автоматически.
+xrandr --auto
+
+# Сбросить таймер скринсейвера.
+# Если disconnect длился долго — X-сервер мог активировать screensaver,
+# и экран погаснет сразу после reconnect.
+xset s reset
+xset dpms force on
+```
+
+Применить:
+
+```bash
+sudo tee /etc/xrdp/reconnectwm.sh > /dev/null << 'EOF'
+#!/bin/sh
+xrandr --auto
+xset s reset
+xset dpms force on
+EOF
+sudo chmod +x /etc/xrdp/reconnectwm.sh
+```
+
+**Что намеренно не включено:**
+
+| Действие | Причина |
+|---|---|
+| Разблокировка KDE Screensaver | Безопасность: при reconnect пользователь должен ввести пароль |
+| `qdbus` команды | Не установлен в системе |
+| `systemctl --user` | Недоступен в xrdp-сессии |
 
 ---
 
@@ -158,26 +205,22 @@ kwriteconfig5 --file ksmserverrc --group General --key loginMode restorePrevious
 
 ### Автоматически (через DisconnectedTimeLimit)
 
-После установки `DisconnectedTimeLimit=7200` старые сессии удаляются сами через 2 часа
-после последнего disconnect. Вмешательства не требуется.
+После установки `DisconnectedTimeLimit=7200` старые сессии удаляются сами
+через 2 часа после последнего disconnect. Вмешательства не требуется.
 
 ### Вручную — завершить конкретную сессию
 
 ```bash
-# 1. Определить лишние сессии: каждый Xorg — это отдельная xrdp-сессия
+# 1. Найти лишние сессии по Xorg-процессам
 ps aux | grep "Xorg :" | grep -v grep
-# Вывод: PID и номер display (:10, :11, ...)
+# Показывает PID и номер display: :10, :11, ...
 
 # 2. Определить к какой сессии подключены сейчас
-#    PID Xorg активной сессии будет иметь открытые файлы xrdp-sesman
-ls -la /proc/$(pgrep -f "Xorg :10")/fd 2>/dev/null | grep -q xrdp && echo ":10 активна"
-ls -la /proc/$(pgrep -f "Xorg :11")/fd 2>/dev/null | grep -q xrdp && echo ":11 активна"
-# Или проще — посмотреть в логе кто подключён последним
 grep "IP:" /var/log/xrdp-sesman.log | tail -3
 
-# 3. Завершить ненужную сессию по PID startplasma-x11
-#    KDE завершится каскадом, Xorg и все процессы сессии остановятся
-kill <PID_startplasma>
+# 3. Завершить ненужную сессию — убить Xorg нужного display
+#    kwin/plasmashell теряют дисплей и завершаются, sesman очищает сессию
+kill $(pgrep -f "Xorg :11")
 ```
 
 ### Вручную — завершить все xrdp-сессии
@@ -190,17 +233,59 @@ sudo systemctl restart xrdp-sesman
 
 ---
 
+## Настройка Remmina
+
+**Версия в системе:** Remmina 1.4.40
+
+### Обязательные параметры профиля
+
+При создании нового RDP-подключения:
+
+**Вкладка "Основные" (Basic):**
+
+| Параметр | Значение | Причина |
+|---|---|---|
+| Глубина цвета (Color depth) | **RemoteFX (32 bpp)** | Одинаковый bpp = одна сессия при Policy=UB |
+| Разрешение (Resolution) | Use client resolution | Подстраивается под монитор |
+
+**Вкладка "Дополнительно" (Advanced):**
+
+| Параметр | Значение | Причина |
+|---|---|---|
+| Качество (Quality) | **Good** | Баланс скорости и качества на LAN |
+| Тип сети (Network connection type) | **LAN** | Отключает лишнее сжатие |
+| Glyph cache | Включить | Ускоряет отрисовку текста |
+
+### Пример профиля
+
+```
+Имя: ALT-RDP
+Протокол: RDP
+Сервер: 10.152.242.94
+Пользователь: UF.RT.RU\i.y.tischenko
+Глубина цвета: RemoteFX (32 bpp)
+Разрешение: Use client resolution
+Качество: Good
+Тип сети: LAN
+```
+
+### Правильное завершение работы
+
+Закрывать окно Remmina **крестиком** — это disconnect, сессия KDE продолжает
+работать на сервере. Не нажимать "Выйти из системы" в меню KDE внутри сессии.
+
+---
+
 ## Проверка результата
 
 1. Подключиться по RDP с первого ПК — создаётся сессия на `:10`
-2. Закрыть окно RDP-клиента (крестиком, не через logout)
+2. Закрыть окно Remmina крестиком (не logout из KDE)
 3. Подключиться по RDP со второго ПК под тем же пользователем
 4. Ожидаемый результат: переподключение к существующей сессии `:10`
 
 ```bash
+# При успешном reconnect строки "create a session" не будет
 grep -E "create a session|Received request" /var/log/xrdp-sesman.log | tail -5
-# При успешном переподключении к существующей сессии строки "create a session" не будет
-# Лог перезаписывается при рестарте xrdp-sesman — проверять сразу после теста
 ```
 
 ---
@@ -219,6 +304,9 @@ grep -E "create a session|Received request" /var/log/xrdp-sesman.log | tail -5
 - **KDE + XRDP**: `org.freedesktop.systemd1 failed` в логах — нормально, systemd
   пользовательской сессии недоступен в xrdp.
 
+- **Remmina**: предупреждение `unable to get secret service` при запуске — нормально
+  для среды без D-Bus secret service; не влияет на работу RDP.
+
 ---
 
 ## Связанные файлы
@@ -228,7 +316,7 @@ grep -E "create a session|Received request" /var/log/xrdp-sesman.log | tail -5
 | `/etc/xrdp/sesman.ini` | Политика сессий, таймауты |
 | `/etc/xrdp/xrdp.ini` | Основной конфиг xrdp |
 | `/etc/xrdp/startwm.sh` | Запуск KDE Plasma при новой сессии |
-| `/etc/xrdp/reconnectwm.sh` | Скрипт при переподключении (сейчас пустой) |
-| `/home/<username>/.xorgxrdp.NN.log` | Лог X-сессии (NN = номер display) |
+| `/etc/xrdp/reconnectwm.sh` | Скрипт при переподключении |
+| `$HOME/.xorgxrdp.NN.log` | Лог X-сессии (NN = номер display) |
 | `/var/log/xrdp-sesman.log` | Лог сессий (перезаписывается при рестарте) |
 | `/var/log/xrdp.log` | Лог xrdp демона (подключения) |
