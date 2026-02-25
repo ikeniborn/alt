@@ -1,3 +1,6 @@
 .claude/sessions
 # Claude Code Agent Workspace
 .claude/workspace/
+
+# Sphinx intermediate build files (html/ is committed)
+docs/sphinx/_build/.doctrees/
