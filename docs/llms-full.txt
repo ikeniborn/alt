@@ -1,3 +1,24 @@
+---
+title: alt Documentation
+---
+
+# alt
+
+```{toctree}
+:maxdepth: 1
+:caption: Documentation
+
+../rdp-session-management
+```
+
+---
+
+:::{note}
+**For AI agents:** This documentation generates `llms.txt` and `llms-full.txt` at build time.
+Use them for efficient navigation: `docs/sphinx/_build/html/llms.txt`
+:::
+
+
 # Управление RDP-сессиями: стабильная работа на ALT Linux + xrdp
 
 **Версия:** 1.11
@@ -443,3 +464,33 @@ grep -E "create a session|Received request" /var/log/xrdp-sesman.log | tail -5
 | `$HOME/.xorgxrdp.NN.log` | Лог X-сессии (NN = номер display) |
 | `/var/log/xrdp-sesman.log` | Лог сессий (перезаписывается при рестарте) |
 | `/var/log/xrdp.log` | Лог xrdp демона (подключения) |
+
+
+---
+title: alt Documentation
+---
+
+# alt
+
+```{toctree}
+:maxdepth: 1
+:caption: Documentation
+
+../rdp-session-management
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: API Reference
+:hidden:
+
+api-reference/index
+```
+
+---
+
+:::{note}
+**For AI agents:** This documentation generates `llms.txt` and `llms-full.txt` at build time.
+Use them for efficient navigation: `docs/sphinx/_build/html/llms.txt`
+:::
+

@@ -1,0 +1,9 @@
+# alt
+
+> For AI agents: This documentation generates llms.txt and llms-full.txt at build time.
+> Use them for efficient navigation: docs/sphinx/_build/html/llms.txt
+
+## Docs
+
+- [alt](/_sources/sphinx/index.md.txt)
+- [Управление RDP-сессиями: стабильная работа на ALT Linux + xrdp](/_sources/rdp-session-management.md.txt)
