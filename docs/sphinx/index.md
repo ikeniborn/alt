@@ -9,6 +9,7 @@ title: alt Documentation
 :caption: Documentation
 
 ../rdp-session-management
+../kerberos-winbind-login-fix
 ```
 
 ---
