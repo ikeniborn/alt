@@ -12,6 +12,7 @@
 
 - После перезагрузки доменный пользователь не может войти через LightDM
 - `klist` после входа выдаёт: `klist: Credentials cache keyring 'persistent:10002:10002' not found` — TGT не выдан при входе через LightDM (числа — UID пользователя, на разных машинах отличаются)
+- `kinit user@UF.RT.RU` завершается успешно (DC доступен через VPN), но смена пользователя через LightDM/KDE всё равно не принимает пароль — winbind запустился в offline-режиме при загрузке и не переключился автоматически при появлении сети
 - Экранная блокировка KDE не принимает пароль; в журнале: `kcheckpass: Authentication failure for <user>`
 - При входе без сети / VPN появляется сообщение **«нет доступа к домену»** — вход проходит по кэшу, но Kerberos-билет не выдаётся
 - `pam_succeed_if(kf5-screenlocker:auth): requirement "user ingroup nopasswdlogin" not met` — **нормальное** INFO-сообщение PAM, не ошибка аутентификации
@@ -499,3 +500,127 @@ systemctl cat winbind | grep -E "ExecStartPre|NetworkManager"
 | `/var/cache/samba/netsamlogon_cache.tdb` | Кэш netlogon-сессий (не offline login) |
 | `/opt/scripts/addtsusers.sh` | PAM exec session — требует аудита содержимого |
 | `/etc/krb5.conf.d/enable_sssd_conf_dir` | Лишний include SSSD (не используется) |
+
+---
+
+## Статус расследования и план проверки
+
+> Раздел обновляется по ходу отладки. При получении root-доступа выполнить
+> шаги ниже последовательно, фиксировать вывод.
+
+### Текущая картина (2026-02-27)
+
+| Факт | Вывод |
+|------|-------|
+| `kinit user@UF.RT.RU` успешен (с VPN) | DC доступен, Kerberos работает, credentials верны |
+| Смена пользователя через LightDM/KDE не принимает пароль | pam_winbind не может аутентифицировать — winbind в offline-режиме |
+| `klist` от altuser (UID 502) показывает TGT в `KEYRING:persistent:502:502` | TGT выдан в keyring локального пользователя, не домена |
+| Override-файлы lightdm и winbind **отсутствуют** | Race condition не устранён, основная причина не исправлена |
+| `sudo` недоступен для доменного пользователя | Все команды ниже — от root |
+
+### Шаг A. Диагностика winbind (без изменений конфигурации)
+
+Выполнить от root при следующем доступе:
+
+```bash
+# A1. Может ли winbind подключиться к DC прямо сейчас?
+wbinfo -t
+# OK: "checking the trust secret for domain UF via RPC calls succeeded"
+# FAIL: "failed to call wbcCheckTrustCredentials: WBC_ERR_*" — winbind offline
+
+# A2. Может ли winbind аутентифицировать доменного пользователя?
+wbinfo -a i.y.tischenko%ПАРОЛЬ
+# OK: "plaintext password authentication succeeded"
+# FAIL: winbind не обращается к DC — нужен рестарт
+
+# A3. Когда winbind запустился и что писал при старте?
+systemctl status winbind --no-pager -n 20
+
+# A4. Журнал ошибок PAM при попытке смены пользователя
+journalctl -b 0 --no-pager -g "pam_winbind|Authentication failure|lightdm" | tail -40
+
+# A5. Уточнить: через что именно пытаются сменить пользователя?
+#   - KDE «Сменить пользователя» → открывает новый LightDM-экран
+#   - su - i.y.tischenko → PAM-стек login/su, не lightdm
+#   - ssh localhost -l i.y.tischenko → другой стек
+```
+
+### Шаг B. Быстрая проверка без перезагрузки (workaround)
+
+Если `wbinfo -t` упал — перезапустить winbind для перехода в online:
+
+```bash
+# B1. Перезапустить winbind (VPN должен быть активен)
+systemctl restart winbind
+
+# B2. Убедиться, что winbind подключился к DC
+wbinfo -t
+# Ожидаемо: OK
+
+# B3. Проверить аутентификацию через winbind
+wbinfo -a i.y.tischenko%ПАРОЛЬ
+# Ожидаемо: "plaintext password authentication succeeded"
+
+# B4. Попытаться сменить пользователя (тот же VPN, сразу после B3)
+# Зафиксировать: принял ли пароль?
+
+# B5. После попытки — проверить PAM-лог
+journalctl --no-pager -g "pam_winbind|lightdm|Authentication" | tail -20
+```
+
+**Интерпретация результата B:**
+
+- Если после `systemctl restart winbind` смена пользователя прошла → подтверждён сценарий «winbind offline при загрузке». Переходить к Шагу C.
+- Если после рестарта winbind всё равно не принимает пароль → проблема не только в offline-режиме. Смотреть журнал A4, уточнять способ смены пользователя.
+
+### Шаг C. Применить постоянное исправление
+
+Применить override-файлы из раздела [Решение](#решение) (Шаги 1–3):
+
+```bash
+# C1. Override LightDM → ждать READY от winbind
+mkdir -p /etc/systemd/system/lightdm.service.d/
+tee /etc/systemd/system/lightdm.service.d/winbind-dependency.conf > /dev/null << 'EOF'
+[Unit]
+After=winbind.service
+Wants=winbind.service
+EOF
+
+# C2. Override Winbind → ждать NM + задержка на DHCP
+mkdir -p /etc/systemd/system/winbind.service.d/
+tee /etc/systemd/system/winbind.service.d/network-wait.conf > /dev/null << 'EOF'
+[Unit]
+After=NetworkManager.service
+
+[Service]
+ExecStartPre=/bin/sleep 5
+EOF
+
+# C3. Применить
+systemctl daemon-reload
+
+# C4. Проверить до перезагрузки
+systemctl show lightdm --property=After | tr ' ' '\n' | grep winbind
+# Ожидаемо: winbind.service
+
+systemctl show winbind --property=After | tr ' ' '\n' | grep NetworkManager
+# Ожидаемо: NetworkManager.service
+```
+
+### Шаг D. Перезагрузка и итоговая проверка
+
+```bash
+# D1. Перезагрузить
+reboot
+
+# D2. После входа под доменным пользователем — есть ли TGT?
+klist
+# Ожидаемо: krbtgt/UF.RT.RU@UF.RT.RU   Valid starting: <сегодня>
+
+# D3. Нет ли ошибок PAM в этой загрузке?
+journalctl -b 0 --no-pager -g "pam_winbind|Authentication failure" | head -20
+# Ожидаемо: пусто
+
+# D4. Порядок старта: winbind должен предшествовать lightdm
+journalctl -b 0 --no-pager -g "winbind|lightdm" -o short | head -20
+```
